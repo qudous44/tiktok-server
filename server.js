@@ -13,25 +13,6 @@ const {
   NODE_ENV,
 } = process.env;
 
-// Check for required environment variables
-if (!TIKTOK_PIXEL_ID) {
-  console.error('❌ TIKTOK_PIXEL_ID environment variable is not set');
-  process.exit(1);
-}
-
-if (!TIKTOK_ACCESS_TOKEN) {
-  console.error('❌ TIKTOK_ACCESS_TOKEN environment variable is not set');
-  process.exit(1);
-}
-
-if (!SHOPIFY_WEBHOOK_SECRET) {
-  console.error('❌ SHOPIFY_WEBHOOK_SECRET environment variable is not set');
-  process.exit(1);
-}
-
-console.log('✅ Environment variables loaded successfully');
-console.log('🔑 Pixel ID:', TIKTOK_PIXEL_ID);
-
 // --- Verify Shopify HMAC ---
 function verifyShopifyWebhook(req) {
   const hmacHeader = req.headers['x-shopify-hmac-sha256'];
@@ -92,25 +73,34 @@ async function sendTikTokPurchase({ order, pageUrl }) {
 
   const contents = mapContents(order.line_items);
 
+  // Correct TikTok API payload structure
   const payload = {
-    pixel_code: TIKTOK_PIXEL_ID,
-    event: 'Purchase',
+    event: "Purchase",
     event_id: eventId,
     timestamp: Math.floor(Date.now() / 1000),
     context: {
-      page: { 
-        url: pageUrl || `https://${order.domain || 'yourstore.com'}/checkout/thank_you` 
+      page: {
+        url: pageUrl || `https://${order.domain || 'gulshanefashion.com'}/checkout/thank_you`
       },
       user: {
         external_id: emailHashed ? [emailHashed] : [],
-        phone_number: phoneHashed ? [phoneHashed] : [],
+        phone: phoneHashed ? [phoneHashed] : [],
       },
+      user_agent: order.client_details?.user_agent || '',
+      ip: order.browser_ip || '',
     },
     properties: {
-      contents,
-      currency,
+      contents: contents,
+      currency: currency,
       value: totalValue,
-    },
+    }
+  };
+
+  // Batch API format
+  const batchPayload = {
+    event_source: "web",
+    event_source_id: TIKTOK_PIXEL_ID,
+    data: [payload]
   };
 
   console.log('📤 Sending payload to TikTok');
@@ -122,7 +112,7 @@ async function sendTikTokPurchase({ order, pageUrl }) {
   console.log('🛍️ Number of items:', contents.length);
 
   try {
-    console.log('🔄 Trying TikTok API: https://business-api.tiktok.com/open_api/v1.3/event/track/');
+    console.log('🔄 Trying TikTok Batch API...');
     
     const resp = await fetch(
       'https://business-api.tiktok.com/open_api/v1.3/event/track/',
@@ -132,7 +122,7 @@ async function sendTikTokPurchase({ order, pageUrl }) {
           'Content-Type': 'application/json',
           'Access-Token': TIKTOK_ACCESS_TOKEN,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(batchPayload),
         timeout: 15000,
       }
     );
