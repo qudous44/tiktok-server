@@ -6,26 +6,20 @@ import fetch from 'node-fetch';
 const app = express();
 
 // --- Middleware to capture raw body for HMAC verification ---
-app.use((req, res, next) => {
-  let data = [];
-  req.on('data', chunk => data.push(chunk));
-  req.on('end', () => {
-    req.rawBody = Buffer.concat(data);
-    try {
-      req.body = JSON.parse(req.rawBody.toString('utf8'));
-    } catch {
-      req.body = {};
-    }
-    next();
-  });
-});
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString(); // keep raw body for HMAC
+    },
+  })
+);
 
 // --- Environment variables ---
 const {
   TIKTOK_PIXEL_ID,
   TIKTOK_ACCESS_TOKEN,
   SHOPIFY_WEBHOOK_SECRET,
-  NODE_ENV
+  NODE_ENV,
 } = process.env;
 
 // --- Verify Shopify HMAC ---
@@ -35,28 +29,42 @@ function verifyShopifyWebhook(req) {
 
   const digest = crypto
     .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
-    .update(req.rawBody)
+    .update(req.rawBody, 'utf8')
     .digest('base64');
 
-  return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmacHeader));
+  // Debug logs to compare values
+  console.log('🔐 Shopify HMAC header:', hmacHeader);
+  console.log('🔐 Calculated digest:', digest);
+
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(digest, 'utf8'),
+      Buffer.from(hmacHeader, 'utf8')
+    );
+  } catch {
+    return false;
+  }
 }
 
 // --- Hash helper ---
 function sha256Lower(value) {
   if (!value) return null;
-  return crypto.createHash('sha256')
+  return crypto
+    .createHash('sha256')
     .update(String(value).trim().toLowerCase())
     .digest('hex');
 }
 
 // --- Map Shopify line items to TikTok contents ---
 function mapContents(line_items) {
-  return (line_items || []).map(item => ({
-    content_id: String(item.product_id || item.variant_id || item.sku || item.id),
+  return (line_items || []).map((item) => ({
+    content_id: String(
+      item.product_id || item.variant_id || item.sku || item.id
+    ),
     content_type: 'product',
     content_name: item.title,
     quantity: item.quantity,
-    price: Number(item.price)
+    price: Number(item.price),
   }));
 }
 
@@ -84,17 +92,17 @@ async function sendTikTokPurchase({ order, pageUrl }) {
       page: { url: pageUrl || 'https://yourstore.example/checkout/thank_you' },
       user: {
         external_id: emailHashed ? [emailHashed] : [],
-        phone_number: phoneHashed ? [phoneHashed] : []
-      }
+        phone_number: phoneHashed ? [phoneHashed] : [],
+      },
     },
     properties: {
       contents,
       currency,
-      value: totalValue
-    }
+      value: totalValue,
+    },
   };
 
-  console.log('Sending payload to TikTok:', JSON.stringify(payload, null, 2));
+  console.log('📤 Sending payload to TikTok:', JSON.stringify(payload, null, 2));
 
   const resp = await fetch(
     'https://business-api.tiktokglobalshop.com/open_api/v1.3/event/track/',
@@ -102,15 +110,17 @@ async function sendTikTokPurchase({ order, pageUrl }) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Access-Token': TIKTOK_ACCESS_TOKEN
+        'Access-Token': TIKTOK_ACCESS_TOKEN,
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     }
   );
 
   const data = await resp.json();
   if (!resp.ok || data.code !== 0) {
-    throw new Error(`TikTok API error: ${resp.status} ${JSON.stringify(data)}`);
+    throw new Error(
+      `TikTok API error: ${resp.status} ${JSON.stringify(data)}`
+    );
   }
   return data;
 }
@@ -118,36 +128,34 @@ async function sendTikTokPurchase({ order, pageUrl }) {
 // --- Shopify Webhook Endpoint ---
 app.post('/webhooks/shopify/orders-create', async (req, res) => {
   try {
-    // Enforce HMAC only in production
     if (NODE_ENV === 'production') {
       if (!verifyShopifyWebhook(req)) {
-        console.error('Invalid HMAC signature');
+        console.error('❌ Invalid HMAC signature');
         return res.status(401).send('Invalid HMAC');
       }
     }
 
     const order = req.body;
-    console.log('Received Shopify order:', JSON.stringify(order, null, 2));
+    console.log('✅ Received Shopify order:', JSON.stringify(order, null, 2));
 
     if (order.test === true) {
-      console.log('Ignored test order');
+      console.log('ℹ️ Ignored test order');
       return res.status(200).send('Ignored test order');
     }
 
-    // Skip TikTok API call in local dev to avoid DNS issues
     if (NODE_ENV === 'development') {
-      console.log('Skipping TikTok call in local development');
+      console.log('ℹ️ Skipping TikTok call in local development');
       return res.status(200).send('OK (local test)');
     }
 
     await sendTikTokPurchase({
       order,
-      pageUrl: order.order_status_url
+      pageUrl: order.order_status_url,
     });
 
     res.status(200).send('OK');
   } catch (err) {
-    console.error('Webhook error:', err);
+    console.error('🔥 Webhook error:', err);
     res.status(500).send('Error');
   }
 });
