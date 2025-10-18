@@ -7,8 +7,8 @@ const app = express();
 
 // --- Environment variables ---
 const {
-  TIKTOK_PIXEL_ID = 'D1PV153C77UANOBRPCFG', // Your pixel ID
-  TIKTOK_ACCESS_TOKEN = '68dc485a2082bc12e945afab09eb90dc1d669f8f', // Your access token
+  TIKTOK_PIXEL_ID = 'D1PV153C77UANOBRPCFG',
+  TIKTOK_ACCESS_TOKEN = '68dc485a2082bc12e945afab09eb90dc1d669f8f',
   SHOPIFY_WEBHOOK_SECRET,
   NODE_ENV,
 } = process.env;
@@ -20,7 +20,7 @@ function verifyShopifyWebhook(req) {
 
   const digest = crypto
     .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
-    .update(req.body) // req.body is raw Buffer here
+    .update(req.body)
     .digest('base64');
 
   console.log('🔐 Shopify HMAC header:', hmacHeader);
@@ -64,11 +64,11 @@ async function sendTikTokPurchase({ order, pageUrl }) {
   const totalValue = Number(order.total_price);
   const currency = String(order.currency || 'PKR');
 
-  const emailHashed = sha256Lower(order.customer?.email);
-  const phoneRaw =
-    order.customer?.phone ||
-    order.billing_address?.phone ||
-    order.shipping_address?.phone;
+  // Get customer data with better fallbacks
+  const emailHashed = sha256Lower(order.customer?.email || order.email);
+  const phoneRaw = order.customer?.phone || 
+                   order.billing_address?.phone || 
+                   order.shipping_address?.phone;
   const phoneHashed = sha256Lower(phoneRaw);
 
   const contents = mapContents(order.line_items);
@@ -79,7 +79,9 @@ async function sendTikTokPurchase({ order, pageUrl }) {
     event_id: eventId,
     timestamp: Math.floor(Date.now() / 1000),
     context: {
-      page: { url: pageUrl || 'https://yourstore.example/checkout/thank_you' },
+      page: { 
+        url: pageUrl || `https://${order.domain || 'yourstore.com'}/checkout/thank_you` 
+      },
       user: {
         external_id: emailHashed ? [emailHashed] : [],
         phone_number: phoneHashed ? [phoneHashed] : [],
@@ -96,57 +98,90 @@ async function sendTikTokPurchase({ order, pageUrl }) {
   console.log('🔑 Pixel ID:', TIKTOK_PIXEL_ID);
   console.log('📦 Order ID:', order.id);
   console.log('💰 Total Value:', totalValue, currency);
+  console.log('📧 Hashed email:', emailHashed ? 'Yes' : 'No');
+  console.log('📞 Hashed phone:', phoneHashed ? 'Yes' : 'No');
+  console.log('🛍️ Number of items:', contents.length);
 
-  // Try multiple TikTok API endpoints
-  const tiktokUrls = [
-    'https://business-api.tiktok.com/open_api/v1.3/event/track/',
-    'https://api.tiktokglobalshop.com/open_api/v1.3/event/track/',
-    'https://business-api.tiktokglobalshop.com/open_api/v1.3/event/track/'
-  ];
-
-  let lastError = null;
-  
-  for (const url of tiktokUrls) {
-    try {
-      console.log(`🔄 Trying TikTok API: ${url}`);
-      const resp = await fetch(url, {
+  try {
+    console.log('🔄 Trying TikTok API: https://business-api.tiktok.com/open_api/v1.3/event/track/');
+    
+    const resp = await fetch(
+      'https://business-api.tiktok.com/open_api/v1.3/event/track/',
+      {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Access-Token': TIKTOK_ACCESS_TOKEN,
         },
         body: JSON.stringify(payload),
-        timeout: 10000, // 10 second timeout
-      });
+        timeout: 15000,
+      }
+    );
 
-      if (resp.ok) {
-        const data = await resp.json();
-        console.log(`✅ TikTok API response from ${url}:`, JSON.stringify(data, null, 2));
-        
+    const responseText = await resp.text();
+    console.log('📨 TikTok API Response Status:', resp.status);
+    console.log('📨 TikTok API Response Body:', responseText);
+
+    if (resp.ok) {
+      try {
+        const data = JSON.parse(responseText);
         if (data.code === 0) {
           console.log('🎉 Successfully sent event to TikTok!');
           return data;
         } else {
           throw new Error(`TikTok API error: ${data.message} (code: ${data.code})`);
         }
-      } else {
-        throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+      } catch (parseError) {
+        throw new Error(`Failed to parse TikTok response: ${parseError.message}`);
       }
-    } catch (error) {
-      console.log(`❌ Failed with ${url}:`, error.message);
-      lastError = error;
-      // Continue to next URL
+    } else {
+      throw new Error(`HTTP ${resp.status}: ${resp.statusText}. Response: ${responseText}`);
     }
-  }
+  } catch (error) {
+    console.error('❌ TikTok API call failed:', error.message);
+    
+    // Try fallback endpoint if main one fails
+    try {
+      console.log('🔄 Trying fallback TikTok API: https://api.tiktok.com/open_api/v1.3/event/track/');
+      
+      const resp = await fetch(
+        'https://api.tiktok.com/open_api/v1.3/event/track/',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Token': TIKTOK_ACCESS_TOKEN,
+          },
+          body: JSON.stringify(payload),
+          timeout: 15000,
+        }
+      );
 
-  // If all URLs failed
-  throw new Error(`All TikTok API endpoints failed. Last error: ${lastError?.message}`);
+      const responseText = await resp.text();
+      console.log('📨 Fallback API Response Status:', resp.status);
+      console.log('📨 Fallback API Response Body:', responseText);
+
+      if (resp.ok) {
+        const data = JSON.parse(responseText);
+        if (data.code === 0) {
+          console.log('🎉 Successfully sent event to TikTok via fallback!');
+          return data;
+        } else {
+          throw new Error(`TikTok fallback API error: ${data.message} (code: ${data.code})`);
+        }
+      }
+    } catch (fallbackError) {
+      console.error('❌ Fallback TikTok API also failed:', fallbackError.message);
+    }
+    
+    throw error;
+  }
 }
 
 // --- Shopify Webhook Endpoint ---
 app.post(
   '/webhooks/shopify/orders-create',
-  express.raw({ type: 'application/json' }), // capture raw body
+  express.raw({ type: 'application/json' }),
   async (req, res) => {
     try {
       console.log('📨 Received webhook from Shopify');
@@ -162,7 +197,7 @@ app.post(
       // Parse JSON only after verifying HMAC
       const order = JSON.parse(req.body.toString('utf8'));
       console.log('✅ Received Shopify order:', order.id);
-      console.log('👤 Customer email:', order.customer?.email);
+      console.log('👤 Customer email:', order.customer?.email || order.email || 'null');
       console.log('🛒 Line items:', order.line_items?.length);
 
       if (order.test === true) {
@@ -178,7 +213,7 @@ app.post(
       console.log('✅ Successfully processed order and sent to TikTok');
       res.status(200).send('OK');
     } catch (err) {
-      console.error('🔥 Webhook error:', err);
+      console.error('🔥 Webhook error:', err.message);
       res.status(500).send('Error');
     }
   }
