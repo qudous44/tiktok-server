@@ -5,15 +5,6 @@ import fetch from 'node-fetch';
 
 const app = express();
 
-// --- Middleware to capture raw body for HMAC verification ---
-app.use(
-  express.json({
-    verify: (req, res, buf) => {
-      req.rawBody = buf; // keep raw buffer exactly as Shopify sends it
-    },
-  })
-);
-
 // --- Environment variables ---
 const {
   TIKTOK_PIXEL_ID,
@@ -29,7 +20,7 @@ function verifyShopifyWebhook(req) {
 
   const digest = crypto
     .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
-    .update(req.rawBody) // use Buffer directly
+    .update(req.body) // req.body is raw Buffer here
     .digest('base64');
 
   console.log('🔐 Shopify HMAC header:', hmacHeader);
@@ -125,39 +116,44 @@ async function sendTikTokPurchase({ order, pageUrl }) {
 }
 
 // --- Shopify Webhook Endpoint ---
-app.post('/webhooks/shopify/orders-create', async (req, res) => {
-  try {
-    if (NODE_ENV === 'production') {
-      if (!verifyShopifyWebhook(req)) {
-        console.error('❌ Invalid HMAC signature');
-        return res.status(401).send('Invalid HMAC');
+app.post(
+  '/webhooks/shopify/orders-create',
+  express.raw({ type: 'application/json' }), // capture raw body
+  async (req, res) => {
+    try {
+      if (NODE_ENV === 'production') {
+        if (!verifyShopifyWebhook(req)) {
+          console.error('❌ Invalid HMAC signature');
+          return res.status(401).send('Invalid HMAC');
+        }
       }
+
+      // Parse JSON only after verifying HMAC
+      const order = JSON.parse(req.body.toString('utf8'));
+      console.log('✅ Received Shopify order:', JSON.stringify(order, null, 2));
+
+      if (order.test === true) {
+        console.log('ℹ️ Ignored test order');
+        return res.status(200).send('Ignored test order');
+      }
+
+      if (NODE_ENV === 'development') {
+        console.log('ℹ️ Skipping TikTok call in local development');
+        return res.status(200).send('OK (local test)');
+      }
+
+      await sendTikTokPurchase({
+        order,
+        pageUrl: order.order_status_url,
+      });
+
+      res.status(200).send('OK');
+    } catch (err) {
+      console.error('🔥 Webhook error:', err);
+      res.status(500).send('Error');
     }
-
-    const order = req.body;
-    console.log('✅ Received Shopify order:', JSON.stringify(order, null, 2));
-
-    if (order.test === true) {
-      console.log('ℹ️ Ignored test order');
-      return res.status(200).send('Ignored test order');
-    }
-
-    if (NODE_ENV === 'development') {
-      console.log('ℹ️ Skipping TikTok call in local development');
-      return res.status(200).send('OK (local test)');
-    }
-
-    await sendTikTokPurchase({
-      order,
-      pageUrl: order.order_status_url,
-    });
-
-    res.status(200).send('OK');
-  } catch (err) {
-    console.error('🔥 Webhook error:', err);
-    res.status(500).send('Error');
   }
-});
+);
 
 // --- Start server ---
 const port = process.env.PORT || 3000;
