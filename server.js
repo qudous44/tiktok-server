@@ -9,7 +9,7 @@ const app = express();
 app.use(
   express.json({
     verify: (req, res, buf) => {
-      req.rawBody = buf.toString(); // keep raw body for HMAC
+      req.rawBody = buf; // keep raw buffer exactly as Shopify sends it
     },
   })
 );
@@ -29,10 +29,9 @@ function verifyShopifyWebhook(req) {
 
   const digest = crypto
     .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
-    .update(req.rawBody, 'utf8')
+    .update(req.rawBody) // use Buffer directly
     .digest('base64');
 
-  // Debug logs to compare values
   console.log('🔐 Shopify HMAC header:', hmacHeader);
   console.log('🔐 Calculated digest:', digest);
 
