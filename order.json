@@ -1,0 +1,13 @@
+{
+  "id": 12345,
+  "total_price": "100.00",
+  "currency": "USD",
+  "line_items": [
+    {
+      "id": 1,
+      "title": "Test Product",
+      "quantity": 1,
+      "price": "100.00"
+    }
+  ]
+}
