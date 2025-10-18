@@ -73,11 +73,11 @@ async function sendTikTokPurchase({ order, pageUrl }) {
 
   const contents = mapContents(order.line_items);
 
-  // Correct TikTok API payload structure
+  // Correct TikTok API payload structure with event_time
   const payload = {
     event: "Purchase",
     event_id: eventId,
-    timestamp: Math.floor(Date.now() / 1000),
+    event_time: Math.floor(Date.now() / 1000), // CHANGED: timestamp → event_time
     context: {
       page: {
         url: pageUrl || `https://${order.domain || 'gulshanefashion.com'}/checkout/thank_you`
