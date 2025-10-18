@@ -7,11 +7,30 @@ const app = express();
 
 // --- Environment variables ---
 const {
-  TIKTOK_PIXEL_ID = 'D1PV153C77UANOBRPCFG',
-  TIKTOK_ACCESS_TOKEN = '68dc485a2082bc12e945afab09eb90dc1d669f8f',
+  TIKTOK_PIXEL_ID,
+  TIKTOK_ACCESS_TOKEN,
   SHOPIFY_WEBHOOK_SECRET,
   NODE_ENV,
 } = process.env;
+
+// Check for required environment variables
+if (!TIKTOK_PIXEL_ID) {
+  console.error('❌ TIKTOK_PIXEL_ID environment variable is not set');
+  process.exit(1);
+}
+
+if (!TIKTOK_ACCESS_TOKEN) {
+  console.error('❌ TIKTOK_ACCESS_TOKEN environment variable is not set');
+  process.exit(1);
+}
+
+if (!SHOPIFY_WEBHOOK_SECRET) {
+  console.error('❌ SHOPIFY_WEBHOOK_SECRET environment variable is not set');
+  process.exit(1);
+}
+
+console.log('✅ Environment variables loaded successfully');
+console.log('🔑 Pixel ID:', TIKTOK_PIXEL_ID);
 
 // --- Verify Shopify HMAC ---
 function verifyShopifyWebhook(req) {
@@ -139,41 +158,6 @@ async function sendTikTokPurchase({ order, pageUrl }) {
     }
   } catch (error) {
     console.error('❌ TikTok API call failed:', error.message);
-    
-    // Try fallback endpoint if main one fails
-    try {
-      console.log('🔄 Trying fallback TikTok API: https://api.tiktok.com/open_api/v1.3/event/track/');
-      
-      const resp = await fetch(
-        'https://api.tiktok.com/open_api/v1.3/event/track/',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Token': TIKTOK_ACCESS_TOKEN,
-          },
-          body: JSON.stringify(payload),
-          timeout: 15000,
-        }
-      );
-
-      const responseText = await resp.text();
-      console.log('📨 Fallback API Response Status:', resp.status);
-      console.log('📨 Fallback API Response Body:', responseText);
-
-      if (resp.ok) {
-        const data = JSON.parse(responseText);
-        if (data.code === 0) {
-          console.log('🎉 Successfully sent event to TikTok via fallback!');
-          return data;
-        } else {
-          throw new Error(`TikTok fallback API error: ${data.message} (code: ${data.code})`);
-        }
-      }
-    } catch (fallbackError) {
-      console.error('❌ Fallback TikTok API also failed:', fallbackError.message);
-    }
-    
     throw error;
   }
 }
