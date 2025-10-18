@@ -7,8 +7,8 @@ const app = express();
 
 // --- Environment variables ---
 const {
-  TIKTOK_PIXEL_ID,
-  TIKTOK_ACCESS_TOKEN,
+  TIKTOK_PIXEL_ID = 'D1PV153C77UANOBRPCFG', // Your pixel ID
+  TIKTOK_ACCESS_TOKEN = '68dc485a2082bc12e945afab09eb90dc1d669f8f', // Your access token
   SHOPIFY_WEBHOOK_SECRET,
   NODE_ENV,
 } = process.env;
@@ -92,27 +92,55 @@ async function sendTikTokPurchase({ order, pageUrl }) {
     },
   };
 
-  console.log('📤 Sending payload to TikTok:', JSON.stringify(payload, null, 2));
+  console.log('📤 Sending payload to TikTok');
+  console.log('🔑 Pixel ID:', TIKTOK_PIXEL_ID);
+  console.log('📦 Order ID:', order.id);
+  console.log('💰 Total Value:', totalValue, currency);
 
-  const resp = await fetch(
-    'https://business-api.tiktokglobalshop.com/open_api/v1.3/event/track/',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Token': TIKTOK_ACCESS_TOKEN,
-      },
-      body: JSON.stringify(payload),
+  // Try multiple TikTok API endpoints
+  const tiktokUrls = [
+    'https://business-api.tiktok.com/open_api/v1.3/event/track/',
+    'https://api.tiktokglobalshop.com/open_api/v1.3/event/track/',
+    'https://business-api.tiktokglobalshop.com/open_api/v1.3/event/track/'
+  ];
+
+  let lastError = null;
+  
+  for (const url of tiktokUrls) {
+    try {
+      console.log(`🔄 Trying TikTok API: ${url}`);
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Token': TIKTOK_ACCESS_TOKEN,
+        },
+        body: JSON.stringify(payload),
+        timeout: 10000, // 10 second timeout
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        console.log(`✅ TikTok API response from ${url}:`, JSON.stringify(data, null, 2));
+        
+        if (data.code === 0) {
+          console.log('🎉 Successfully sent event to TikTok!');
+          return data;
+        } else {
+          throw new Error(`TikTok API error: ${data.message} (code: ${data.code})`);
+        }
+      } else {
+        throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+      }
+    } catch (error) {
+      console.log(`❌ Failed with ${url}:`, error.message);
+      lastError = error;
+      // Continue to next URL
     }
-  );
-
-  const data = await resp.json();
-  if (!resp.ok || data.code !== 0) {
-    throw new Error(
-      `TikTok API error: ${resp.status} ${JSON.stringify(data)}`
-    );
   }
-  return data;
+
+  // If all URLs failed
+  throw new Error(`All TikTok API endpoints failed. Last error: ${lastError?.message}`);
 }
 
 // --- Shopify Webhook Endpoint ---
@@ -121,25 +149,25 @@ app.post(
   express.raw({ type: 'application/json' }), // capture raw body
   async (req, res) => {
     try {
+      console.log('📨 Received webhook from Shopify');
+      
       if (NODE_ENV === 'production') {
         if (!verifyShopifyWebhook(req)) {
           console.error('❌ Invalid HMAC signature');
           return res.status(401).send('Invalid HMAC');
         }
+        console.log('✅ HMAC verification passed');
       }
 
       // Parse JSON only after verifying HMAC
       const order = JSON.parse(req.body.toString('utf8'));
-      console.log('✅ Received Shopify order:', JSON.stringify(order, null, 2));
+      console.log('✅ Received Shopify order:', order.id);
+      console.log('👤 Customer email:', order.customer?.email);
+      console.log('🛒 Line items:', order.line_items?.length);
 
       if (order.test === true) {
         console.log('ℹ️ Ignored test order');
         return res.status(200).send('Ignored test order');
-      }
-
-      if (NODE_ENV === 'development') {
-        console.log('ℹ️ Skipping TikTok call in local development');
-        return res.status(200).send('OK (local test)');
       }
 
       await sendTikTokPurchase({
@@ -147,6 +175,7 @@ app.post(
         pageUrl: order.order_status_url,
       });
 
+      console.log('✅ Successfully processed order and sent to TikTok');
       res.status(200).send('OK');
     } catch (err) {
       console.error('🔥 Webhook error:', err);
@@ -155,6 +184,34 @@ app.post(
   }
 );
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    environment: NODE_ENV,
+    pixel_id: TIKTOK_PIXEL_ID ? 'Configured' : 'Missing',
+    access_token: TIKTOK_ACCESS_TOKEN ? 'Configured' : 'Missing',
+    webhook_secret: SHOPIFY_WEBHOOK_SECRET ? 'Configured' : 'Missing'
+  });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.status(200).json({ 
+    message: 'TikTok Shopify Webhook Server is running',
+    endpoints: {
+      webhook: 'POST /webhooks/shopify/orders-create',
+      health: 'GET /health'
+    }
+  });
+});
+
 // --- Start server ---
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`✅ Server listening on :${port}`));
+app.listen(port, () => {
+  console.log(`✅ Server listening on :${port}`);
+  console.log(`🔑 TikTok Pixel ID: ${TIKTOK_PIXEL_ID}`);
+  console.log(`🔐 Webhook Secret: ${SHOPIFY_WEBHOOK_SECRET ? 'Configured' : 'Missing'}`);
+  console.log(`🌍 Environment: ${NODE_ENV || 'development'}`);
+});
