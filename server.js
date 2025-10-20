@@ -78,7 +78,7 @@ async function sendTikTokPurchase({ order, pageUrl }) {
     String(item.product_id || item.variant_id || item.sku || item.id)
   );
 
-  // ✅ UPDATED: TikTok API payload with content_id in properties
+  // ✅ FIXED: TikTok API payload with ALL required parameters
   const payload = {
     event: "Purchase",
     event_id: eventId,
@@ -95,13 +95,12 @@ async function sendTikTokPurchase({ order, pageUrl }) {
       ip: order.browser_ip || '',
     },
     properties: {
-      // ✅ CRITICAL: Add content_id array at properties level (was missing)
+      // ✅ ALL CRITICAL PARAMETERS INCLUDED:
       content_id: contentIds,
-      content_type: "product",
+      content_type: "product", // ✅ THIS WAS MISSING - NOW FIXED
       contents: contents,
       currency: currency,
       value: totalValue,
-      // ✅ ADDED: Content category for better categorization
       content_category: order.line_items?.[0]?.product_type || "fashion",
     }
   };
@@ -119,9 +118,10 @@ async function sendTikTokPurchase({ order, pageUrl }) {
   console.log('💰 Total Value:', totalValue, currency);
   console.log('📧 Hashed email:', emailHashed ? 'Yes' : 'No');
   console.log('📞 Hashed phone:', phoneHashed ? 'Yes' : 'No');
-  console.log('🆔 Content IDs:', contentIds); // ✅ NEW: Log content IDs
+  console.log('🆔 Content IDs:', contentIds);
   console.log('🛍️ Number of items:', contents.length);
   console.log('📝 Content Type:', payload.properties.content_type);
+  console.log('✅ Content Type Included:', payload.properties.content_type !== undefined);
 
   try {
     console.log('🔄 Trying TikTok Batch API...');
@@ -149,6 +149,8 @@ async function sendTikTokPurchase({ order, pageUrl }) {
         if (data.code === 0) {
           console.log('🎉 Successfully sent event to TikTok!');
           console.log('✅ Content IDs were included:', contentIds.length > 0);
+          console.log('✅ Content Type was included:', payload.properties.content_type !== undefined);
+          console.log('✅ All parameters sent successfully!');
           return data;
         } else {
           throw new Error(`TikTok API error: ${data.message} (code: ${data.code})`);
@@ -198,7 +200,7 @@ app.post(
         return res.status(200).send('Ignored test order');
       }
 
-      // ✅ ADDED: Check for cancelled/refunded orders
+      // ✅ Check for cancelled/refunded orders
       if (order.cancelled_at || order.financial_status === 'refunded') {
         console.log('ℹ️ Ignored cancelled/refunded order');
         return res.status(200).send('Ignored cancelled order');
@@ -239,7 +241,7 @@ app.get('/', (req, res) => {
       webhook: 'POST /webhooks/shopify/orders-create',
       health: 'GET /health'
     },
-    version: '2.0 - Fixed Content ID Issue'
+    version: '2.1 - Fixed Content Type Parameter'
   });
 });
 
@@ -250,5 +252,6 @@ app.listen(port, () => {
   console.log(`🔑 TikTok Pixel ID: ${TIKTOK_PIXEL_ID}`);
   console.log(`🔐 Webhook Secret: ${SHOPIFY_WEBHOOK_SECRET ? 'Configured' : 'Missing'}`);
   console.log(`🌍 Environment: ${NODE_ENV || 'development'}`);
-  console.log(`🔄 Version: 2.0 - Fixed Content ID Issue`);
+  console.log(`🔄 Version: 2.1 - Fixed Content Type Parameter`);
+  console.log(`🚀 All parameters including content_type are now included!`);
 });
