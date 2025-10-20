@@ -73,11 +73,11 @@ async function sendTikTokPurchase({ order, pageUrl }) {
 
   const contents = mapContents(order.line_items);
 
-  // Correct TikTok API payload structure with event_time
+  // ✅ UPDATED: TikTok API payload structure with content_type at root level
   const payload = {
     event: "Purchase",
     event_id: eventId,
-    event_time: Math.floor(Date.now() / 1000), // CHANGED: timestamp → event_time
+    event_time: Math.floor(Date.now() / 1000),
     context: {
       page: {
         url: pageUrl || `https://${order.domain || 'gulshanefashion.com'}/checkout/thank_you`
@@ -90,9 +90,13 @@ async function sendTikTokPurchase({ order, pageUrl }) {
       ip: order.browser_ip || '',
     },
     properties: {
+      // ✅ CRITICAL: Added content_type at root level (was missing)
+      content_type: "product",
       contents: contents,
       currency: currency,
       value: totalValue,
+      // ✅ ADDED: Content category for better categorization
+      content_category: order.line_items?.[0]?.product_type || "fashion",
     }
   };
 
@@ -110,6 +114,7 @@ async function sendTikTokPurchase({ order, pageUrl }) {
   console.log('📧 Hashed email:', emailHashed ? 'Yes' : 'No');
   console.log('📞 Hashed phone:', phoneHashed ? 'Yes' : 'No');
   console.log('🛍️ Number of items:', contents.length);
+  console.log('📝 Content Type:', payload.properties.content_type); // ✅ NEW
 
   try {
     console.log('🔄 Trying TikTok Batch API...');
@@ -177,6 +182,12 @@ app.post(
       if (order.test === true) {
         console.log('ℹ️ Ignored test order');
         return res.status(200).send('Ignored test order');
+      }
+
+      // ✅ ADDED: Check for cancelled/refunded orders
+      if (order.cancelled_at || order.financial_status === 'refunded') {
+        console.log('ℹ️ Ignored cancelled/refunded order');
+        return res.status(200).send('Ignored cancelled order');
       }
 
       await sendTikTokPurchase({
