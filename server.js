@@ -72,8 +72,13 @@ async function sendTikTokPurchase({ order, pageUrl }) {
   const phoneHashed = sha256Lower(phoneRaw);
 
   const contents = mapContents(order.line_items);
+  
+  // ✅ CRITICAL: Extract content_ids for root level
+  const contentIds = (order.line_items || []).map(item => 
+    String(item.product_id || item.variant_id || item.sku || item.id)
+  );
 
-  // ✅ UPDATED: TikTok API payload structure with content_type at root level
+  // ✅ UPDATED: TikTok API payload with content_id in properties
   const payload = {
     event: "Purchase",
     event_id: eventId,
@@ -90,7 +95,8 @@ async function sendTikTokPurchase({ order, pageUrl }) {
       ip: order.browser_ip || '',
     },
     properties: {
-      // ✅ CRITICAL: Added content_type at root level (was missing)
+      // ✅ CRITICAL: Add content_id array at properties level (was missing)
+      content_id: contentIds,
       content_type: "product",
       contents: contents,
       currency: currency,
@@ -113,8 +119,9 @@ async function sendTikTokPurchase({ order, pageUrl }) {
   console.log('💰 Total Value:', totalValue, currency);
   console.log('📧 Hashed email:', emailHashed ? 'Yes' : 'No');
   console.log('📞 Hashed phone:', phoneHashed ? 'Yes' : 'No');
+  console.log('🆔 Content IDs:', contentIds); // ✅ NEW: Log content IDs
   console.log('🛍️ Number of items:', contents.length);
-  console.log('📝 Content Type:', payload.properties.content_type); // ✅ NEW
+  console.log('📝 Content Type:', payload.properties.content_type);
 
   try {
     console.log('🔄 Trying TikTok Batch API...');
@@ -141,6 +148,7 @@ async function sendTikTokPurchase({ order, pageUrl }) {
         const data = JSON.parse(responseText);
         if (data.code === 0) {
           console.log('🎉 Successfully sent event to TikTok!');
+          console.log('✅ Content IDs were included:', contentIds.length > 0);
           return data;
         } else {
           throw new Error(`TikTok API error: ${data.message} (code: ${data.code})`);
@@ -164,6 +172,7 @@ app.post(
   async (req, res) => {
     try {
       console.log('📨 Received webhook from Shopify');
+      console.log('🔍 Webhook Headers:', req.headers);
       
       if (NODE_ENV === 'production') {
         if (!verifyShopifyWebhook(req)) {
@@ -177,7 +186,12 @@ app.post(
       const order = JSON.parse(req.body.toString('utf8'));
       console.log('✅ Received Shopify order:', order.id);
       console.log('👤 Customer email:', order.customer?.email || order.email || 'null');
-      console.log('🛒 Line items:', order.line_items?.length);
+      console.log('🛒 Line items count:', order.line_items?.length || 0);
+      
+      // Log product IDs for debugging
+      if (order.line_items && order.line_items.length > 0) {
+        console.log('📋 Product IDs:', order.line_items.map(item => item.product_id));
+      }
 
       if (order.test === true) {
         console.log('ℹ️ Ignored test order');
@@ -199,6 +213,7 @@ app.post(
       res.status(200).send('OK');
     } catch (err) {
       console.error('🔥 Webhook error:', err.message);
+      console.error('🔥 Stack trace:', err.stack);
       res.status(500).send('Error');
     }
   }
@@ -223,7 +238,8 @@ app.get('/', (req, res) => {
     endpoints: {
       webhook: 'POST /webhooks/shopify/orders-create',
       health: 'GET /health'
-    }
+    },
+    version: '2.0 - Fixed Content ID Issue'
   });
 });
 
@@ -234,4 +250,5 @@ app.listen(port, () => {
   console.log(`🔑 TikTok Pixel ID: ${TIKTOK_PIXEL_ID}`);
   console.log(`🔐 Webhook Secret: ${SHOPIFY_WEBHOOK_SECRET ? 'Configured' : 'Missing'}`);
   console.log(`🌍 Environment: ${NODE_ENV || 'development'}`);
+  console.log(`🔄 Version: 2.0 - Fixed Content ID Issue`);
 });
