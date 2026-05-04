@@ -66,7 +66,9 @@ function buildUserContext(order) {
 
 // --- Send event to TikTok Events API ---
 async function sendTikTokEvent({ eventName, order, pageUrl, extraProps = {} }) {
-    const eventId = `${eventName}_${order.id}_${Date.now()}`;
+    // 1. If it's a Purchase, match the Browser Pixel exact Order ID.
+    // 2. For CompletePayment/Cancelled, use a prefix so it deduplicates against itself.
+    const eventId = eventName === 'Purchase' ? String(order.id) : `${eventName}_${order.id}`;
     const { emailHashed, phoneHashed } = buildUserContext(order);
     const contents = mapContents(order.line_items);
     const contentIds = (order.line_items || []).map((item) =>
